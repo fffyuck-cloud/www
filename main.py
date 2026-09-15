@@ -1,5 +1,4 @@
 import discord
-from keep_alive import keep_alive
 from discord.ext import commands, tasks
 import json
 import os
@@ -11,8 +10,8 @@ import urllib.request
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-# ==================== CẤU HÌNH ====================
-TOKEN = os.getenv("DISCORD_TOKEN")   # ← TOKEN LẤY TỪ BIẾN MÔI TRƯỜNG, KHÔNG GHI VÀO CODE
+# ==================== TOKEN ====================
+TOKEN = os.getenv("DISCORD_TOKEN") or "DÁN_TOKEN_VÀO_ĐÂY_NẾU_CHẠY_LOCAL"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -119,7 +118,7 @@ def create_roast_image(avatar_bytes):
             a = ang + math.pi + s * 0.5
             handdrawn_line(draw, tip, (tip[0]+90*math.cos(a), tip[1]+90*math.sin(a)))
         font = load_font(110)
-        layer = Image.new("RGBA", (580, 220), (0,0,0,0))
+        layer = Image.new("RGBA", (580, 220), (0, 0, 0, 0))
         ImageDraw.Draw(layer).text((0, 0), ROAST_TEXT, font=font, fill="white")
         layer = layer.rotate(8, expand=True, resample=Image.BICUBIC)
         canvas.alpha_composite(layer, (660, 55))
@@ -209,7 +208,7 @@ async def on_ready():
         check_expired_mutes.start()
     await bot.change_presence(activity=discord.Game(name=".help | .m .b .w"))
 
-# ==================== LỆNH ====================
+# ==================== MUTE (.m) ====================
 @bot.command(aliases=["m"])
 @commands.has_permissions(manage_roles=True)
 async def mute(ctx, member: discord.Member = None, time: str = None, *, reason=None):
@@ -249,6 +248,7 @@ async def mute(ctx, member: discord.Member = None, time: str = None, *, reason=N
     embed.set_footer(text=f"ID: {member.id}")
     await send_with_roast(ctx, embed, member)
 
+# ==================== UNMUTE (.um) ====================
 @bot.command(aliases=["um"])
 @commands.has_permissions(manage_roles=True)
 async def unmute(ctx, member: discord.Member = None):
@@ -260,7 +260,8 @@ async def unmute(ctx, member: discord.Member = None):
         mutes = load_mutes()
         gid, uid = str(ctx.guild.id), str(member.id)
         if gid in mutes and uid in mutes[gid]:
-            del mutes[gid][uid]; save_mutes(mutes)
+            del mutes[gid][uid]
+            save_mutes(mutes)
         embed = discord.Embed(title="🔊 ĐÃ UNMUTE", color=BLACK)
         embed.add_field(name="👤", value=member.mention, inline=True)
         embed.add_field(name="🛡️", value=ctx.author.mention, inline=True)
@@ -268,6 +269,7 @@ async def unmute(ctx, member: discord.Member = None):
     else:
         await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Người này không bị mute!", color=BLACK))
 
+# ==================== BAN (.b) ====================
 @bot.command(aliases=["b"])
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member = None, *, reason=None):
@@ -283,6 +285,7 @@ async def ban(ctx, member: discord.Member = None, *, reason=None):
     embed.set_thumbnail(url=member.display_avatar.url)
     await send_with_roast(ctx, embed, member)
 
+# ==================== UNBAN (.ub) ====================
 @bot.command(aliases=["ub"])
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, user_id: int = None):
@@ -295,6 +298,7 @@ async def unban(ctx, user_id: int = None):
     except discord.NotFound:
         await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Người này không bị ban!", color=BLACK))
 
+# ==================== WARN (.w) ====================
 @bot.command(aliases=["w"])
 @commands.has_permissions(manage_messages=True)
 async def warn(ctx, member: discord.Member = None, *, reason=None):
@@ -318,6 +322,7 @@ async def warn(ctx, member: discord.Member = None, *, reason=None):
     embed.set_thumbnail(url=member.display_avatar.url)
     await send_with_roast(ctx, embed, member)
 
+# ==================== WARNS (.ws) ====================
 @bot.command(aliases=["ws", "warnings"])
 async def warns(ctx, member: discord.Member = None):
     member = member or ctx.author
@@ -330,6 +335,7 @@ async def warns(ctx, member: discord.Member = None):
             embed.add_field(name=f"Warn #{i}", value=f"📄 {w['reason']}\n🛡️ {w['mod']}", inline=False)
     await ctx.send(embed=embed)
 
+# ==================== CLEARWARN (.cw) ====================
 @bot.command(aliases=["cw"])
 @commands.has_permissions(manage_messages=True)
 async def clearwarn(ctx, member: discord.Member = None):
@@ -338,11 +344,13 @@ async def clearwarn(ctx, member: discord.Member = None):
     warnings = load_warnings()
     gid, uid = str(ctx.guild.id), str(member.id)
     if gid in warnings and uid in warnings[gid]:
-        del warnings[gid][uid]; save_warnings(warnings)
+        del warnings[gid][uid]
+        save_warnings(warnings)
         await ctx.send(embed=discord.Embed(title="🧹 ĐÃ XÓA WARN", description=member.mention, color=BLACK))
     else:
         await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Không có warn nào!", color=BLACK))
 
+# ==================== HELP ====================
 @bot.command()
 async def help(ctx):
     embed = discord.Embed(title="📖 LỆNH BOT", color=BLACK)
@@ -356,6 +364,7 @@ async def help(ctx):
     embed.set_footer(text="Prefix: . ! ?")
     await ctx.send(embed=embed)
 
+# ==================== LỖI ====================
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
@@ -370,7 +379,4 @@ async def on_command_error(ctx, error):
         await ctx.send(embed=discord.Embed(title="❌ Thiếu tham số", description="Dùng `.help`!", color=BLACK))
 
 # ==================== CHẠY ====================
-if not TOKEN:
-    raise SystemExit("❌ Thiếu token! Hãy đặt biến môi trường DISCORD_TOKEN")
-keep_alive()
 bot.run(TOKEN)
