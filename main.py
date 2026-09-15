@@ -372,5 +372,5 @@ async def on_command_error(ctx, error):
 # ==================== CHẠY ====================
 if not TOKEN:
     raise SystemExit("❌ Thiếu token! Hãy đặt biến môi trường DISCORD_TOKEN")
-
+keep_alive()
 bot.run(TOKEN)
