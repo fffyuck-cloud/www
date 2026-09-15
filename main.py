@@ -4,9 +4,33 @@ import json
 import os
 import re
 import io
+import math
+import random
+import threading
 import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+# ==================== PORT CHO RENDER (tự mở, khỏi file riêng) ====================
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write("Bot dang chay! OK".encode())
+
+    def log_message(self, *args):
+        pass  # không in log http cho đỡ rối
+
+def open_port():
+    port = int(os.getenv("PORT", 8080))  # Render tự cấp biến PORT
+    try:
+        server = HTTPServer(("0.0.0.0", port), PingHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        print(f"🌐 Port {port} đã mở — Render yên tâm rồi")
+    except Exception as e:
+        print("⚠️ Không mở được port:", e)
 
 # ==================== TOKEN ====================
 TOKEN = os.getenv("DISCORD_TOKEN") or "DÁN_TOKEN_VÀO_ĐÂY_NẾU_CHẠY_LOCAL"
@@ -21,18 +45,10 @@ BLACK = 0x000000
 WARN_FILE = "warnings.json"
 MUTE_FILE = "mutes.json"
 
-# ==================== BANNER MŨI TÊN ====================
-TEMPLATE_URL = "https://i.pinimg.com/736x/65/50/26/6550263f2736de68a32cb568d431536e.jpg"
+ROAST_TEXT = "is stupid"
 TEMPLATE_FILE = "arrow.png"
-
-# ⚙️ CHỈNH 3 SỐ NÀY NẾU MŨI TÊN CHƯA KHỚP AVATAR:
-TIP_X = 0.50          # đầu mũi tên ở 50% chiều ngang (chỉ lệch TRÁI → giảm 0.4/0.3, lệch PHẢI → tăng 0.6/0.7)
-AVATAR_SIZE = 300     # kích thước avatar
-GAP = 5               # khoảng cách banner ↔ avatar (0 = dính sát)
-BG = (0, 0, 0, 255)   # nền ĐEN — nếu banner nền TRẮNG thì đổi thành (255, 255, 255, 255)
-
-_tpl = None
-_img_cache = {}
+TEMPLATE_URL = "https://i.pinimg.com/1200x/d0/ef/e9/d0efe9560ad8d16e47643939024025c6.jpg"
+_tpl_cache = None
 
 # ==================== JSON ====================
 def load_json(path):
@@ -50,47 +66,84 @@ def save_warnings(d): save_json(WARN_FILE, d)
 def load_mutes(): return load_json(MUTE_FILE)
 def save_mutes(d): save_json(MUTE_FILE, d)
 
-# ==================== TẠO ẢNH: BANNER TRÊN + AVATAR DƯỚI ĐẦU MŨI TÊN ====================
-def get_template():
-    """Tải banner đúng 1 LẦN, cache vào RAM."""
-    global _tpl
-    if _tpl is not None:
-        return _tpl
-    if not os.path.exists(TEMPLATE_FILE):
+# ==================== BANNER MŨI TÊN ====================
+def download_template():
+    if os.path.exists(TEMPLATE_FILE):
+        return
+    try:
+        req = urllib.request.Request(TEMPLATE_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as r, open(TEMPLATE_FILE, "wb") as f:
+            f.write(r.read())
+        print("✅ Đã tải banner mũi tên")
+    except Exception as e:
+        print("⚠️ Không tải được banner → tự vẽ:", e)
+
+def load_font(size):
+    for path in ["Caveat-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                 "C:/Windows/Fonts/Inkfree.ttf", "C:/Windows/Fonts/comici.ttf",
+                 "/System/Library/Fonts/Supplemental/MarkerFelt.ttc"]:
         try:
-            req = urllib.request.Request(TEMPLATE_URL, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=15) as r, open(TEMPLATE_FILE, "wb") as f:
-                f.write(r.read())
-            print("✅ Đã tải banner mũi tên")
-        except Exception as e:
-            print("⚠️ Không tải được banner:", e)
-            return None
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+def handdrawn_line(draw, start, end, width=8):
+    for _ in range(2):
+        pts = []
+        for i in range(21):
+            t = i / 20
+            pts.append((start[0] + (end[0]-start[0])*t + random.uniform(-3,3),
+                        start[1] + (end[1]-start[1])*t + random.uniform(-3,3)))
+        draw.line(pts, fill="white", width=width, joint="curve")
+
+def get_template():
+    global _tpl_cache
+    if _tpl_cache is not None:
+        return _tpl_cache
+    if not os.path.exists(TEMPLATE_FILE):
+        return None
     tpl = Image.open(TEMPLATE_FILE).convert("RGBA")
-    if tpl.width > 1000:
-        tpl = tpl.resize((1000, int(tpl.height * 1000 / tpl.width)))
-    _tpl = tpl
-    return _tpl
+    if tpl.width > 1200:
+        tpl = tpl.resize((1200, int(tpl.height * 1200 / tpl.width)))
+    mask = tpl.convert("L").point(lambda v: 255 if v > 40 else 0)
+    tpl.putalpha(mask)
+    _tpl_cache = tpl
+    return tpl
 
 def create_roast_image(avatar_bytes):
-    tpl = get_template()
     avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
-    avatar = ImageOps.fit(avatar, (AVATAR_SIZE, AVATAR_SIZE))
+    avatar = ImageOps.fit(avatar, (280, 280))
 
-    tw, th = tpl.size
-    tip_x = int(tw * TIP_X)
-
-    W = max(tw, AVATAR_SIZE + 20)
-    H = th + GAP + AVATAR_SIZE + 10
-    canvas = Image.new("RGBA", (W, H), BG)
-
-    # Banner ở TRÊN, căn giữa
-    tpl_ox = (W - tw) // 2
-    canvas.alpha_composite(tpl, (tpl_ox, 0))
-
-    # Avatar ở DƯỚI, căn giữa theo đúng đầu mũi tên
-    ax = tpl_ox + tip_x - AVATAR_SIZE // 2
-    ax = max(10, min(ax, W - AVATAR_SIZE - 10))
-    canvas.alpha_composite(avatar, (ax, th + GAP))
+    tpl = get_template()
+    if tpl:
+        tw, th = tpl.size
+        tip = (int(tw * 0.11), int(th * 0.81))
+        GAP, AV = 25, 280
+        tpl_x = AV + 20 + GAP - tip[0]
+        tpl_y = 20
+        av_x, av_y = 20, max(10, tpl_y + tip[1] - AV // 2)
+        W = tpl_x + tw + 10
+        H = max(th + tpl_y, av_y + AV + 10, 300)
+        canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+        canvas.alpha_composite(avatar, (av_x, av_y))
+        canvas.alpha_composite(tpl, (tpl_x, tpl_y))
+    else:
+        W, H = 1250, 400
+        canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+        canvas.paste(avatar, (60, 60), avatar)
+        draw = ImageDraw.Draw(canvas)
+        tip, tail = (395, 340), (630, 110)
+        handdrawn_line(draw, tail, tip)
+        ang = math.atan2(tip[1]-tail[1], tip[0]-tail[0])
+        for s in (1, -1):
+            a = ang + math.pi + s * 0.5
+            handdrawn_line(draw, tip, (tip[0]+90*math.cos(a), tip[1]+90*math.sin(a)))
+        font = load_font(110)
+        layer = Image.new("RGBA", (580, 220), (0, 0, 0, 0))
+        ImageDraw.Draw(layer).text((0, 0), ROAST_TEXT, font=font, fill="white")
+        layer = layer.rotate(8, expand=True, resample=Image.BICUBIC)
+        canvas.alpha_composite(layer, (660, 55))
 
     buf = io.BytesIO()
     canvas.convert("RGB").save(buf, format="PNG")
@@ -98,21 +151,15 @@ def create_roast_image(avatar_bytes):
     return buf
 
 async def send_with_roast(ctx, embed, member):
-    """Cache theo user → cùng 1 user bị mute/ban/warn lần 2 trở đi = 0 tải, 0 xử lý."""
-    key = f"{member.id}:{member.display_avatar.key}"
-    data = _img_cache.get(key)
-    if data is None:
-        try:
-            avatar_bytes = await member.display_avatar.with_size(128).read()
-            data = create_roast_image(avatar_bytes).getvalue()
-            if len(_img_cache) > 200:
-                _img_cache.clear()
-            _img_cache[key] = data
-        except Exception as e:
-            print("Lỗi tạo ảnh:", e)
-            return await ctx.send(embed=embed)
-    embed.set_image(url="attachment://roast.png")
-    await ctx.send(embed=embed, file=discord.File(io.BytesIO(data), filename="roast.png"))
+    try:
+        avatar_bytes = await member.display_avatar.replace(format="png", size=256).read()
+        buf = create_roast_image(avatar_bytes)
+        file = discord.File(buf, filename="roast.png")
+        embed.set_image(url="attachment://roast.png")
+        await ctx.send(embed=embed, file=file)
+    except Exception as e:
+        print("Lỗi tạo ảnh:", e)
+        await ctx.send(embed=embed)
 
 # ==================== THỜI GIAN ====================
 def check_time_format(text):
@@ -123,10 +170,10 @@ def parse_duration(text):
     if not m:
         return None
     a, u = int(m.group(1)), m.group(2)
-    if u == "s":        return a if 1 <= a <= 60 else None
+    if u == "s":  return a if 1 <= a <= 60 else None
     if u in ("p", "m"): return a * 60 if 1 <= a <= 60 else None
-    if u == "h":        return a * 3600 if 1 <= a <= 24 else None
-    if u == "d":        return a * 86400 if 1 <= a <= 50 else None
+    if u == "h":  return a * 3600 if 1 <= a <= 24 else None
+    if u == "d":  return a * 86400 if 1 <= a <= 50 else None
     return None
 
 def format_duration(s):
@@ -160,7 +207,7 @@ async def check_expired_mutes():
             if now >= datetime.fromisoformat(mutes[gid][uid]["unmute_time"]):
                 member = guild.get_member(int(uid))
                 role = discord.utils.get(guild.roles, name="Muted")
-                if member and role and role in member.roles:
+                if member and role in member.roles:
                     try:
                         await member.remove_roles(role, reason="⏰ Hết thời gian mute")
                     except discord.Forbidden:
@@ -177,7 +224,7 @@ async def before_check():
 # ==================== SỰ KIỆN ====================
 @bot.event
 async def on_ready():
-    get_template()  # tải banner trước để lệnh đầu không bị chậm
+    download_template()
     print(f"✅ Bot online: {bot.user}")
     if not check_expired_mutes.is_running():
         check_expired_mutes.start()
@@ -231,7 +278,7 @@ async def unmute(ctx, member: discord.Member = None):
         return await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Tag người cần unmute!", color=BLACK))
     role = discord.utils.get(ctx.guild.roles, name="Muted")
     if role and role in member.roles:
-        await member.remove_roles(role, reason=f"Unmute bởi {ctx.author}")
+        await member.remove_roles(role)
         mutes = load_mutes()
         gid, uid = str(ctx.guild.id), str(member.id)
         if gid in mutes and uid in mutes[gid]:
@@ -240,8 +287,7 @@ async def unmute(ctx, member: discord.Member = None):
         embed = discord.Embed(title="🔊 ĐÃ UNMUTE", color=BLACK)
         embed.add_field(name="👤", value=member.mention, inline=True)
         embed.add_field(name="🛡️", value=ctx.author.mention, inline=True)
-        embed.set_thumbnail(url=member.display_avatar.url)
-        await send_with_roast(ctx, embed, member)
+        await ctx.send(embed=embed)
     else:
         await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Người này không bị mute!", color=BLACK))
 
@@ -326,11 +372,6 @@ async def clearwarn(ctx, member: discord.Member = None):
     else:
         await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Không có warn nào!", color=BLACK))
 
-# ==================== TEST BANNER (.rt) ====================
-@bot.command(aliases=["rt", "testroast"])
-async def roasttest(ctx):
-    await send_with_roast(ctx, discord.Embed(title="🧪 Test banner mũi tên", color=BLACK), ctx.author)
-
 # ==================== HELP ====================
 @bot.command()
 async def help(ctx):
@@ -360,4 +401,5 @@ async def on_command_error(ctx, error):
         await ctx.send(embed=discord.Embed(title="❌ Thiếu tham số", description="Dùng `.help`!", color=BLACK))
 
 # ==================== CHẠY ====================
+open_port()      # ← mở port TRƯỚC, Render khỏi cảnh báo
 bot.run(TOKEN)
