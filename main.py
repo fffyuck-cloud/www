@@ -20,17 +20,13 @@ class PingHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write("Bot dang chay! OK".encode())
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+
     def log_message(self, *args):
         pass  # không in log http cho đỡ rối
-
-def open_port():
-    port = int(os.getenv("PORT", 8080))  # Render tự cấp biến PORT
-    try:
-        server = HTTPServer(("0.0.0.0", port), PingHandler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        print(f"🌐 Port {port} đã mở — Render yên tâm rồi")
-    except Exception as e:
-        print("⚠️ Không mở được port:", e)
 
 # ==================== TOKEN ====================
 TOKEN = os.getenv("DISCORD_TOKEN") or "DÁN_TOKEN_VÀO_ĐÂY_NẾU_CHẠY_LOCAL"
