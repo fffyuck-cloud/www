@@ -50,12 +50,12 @@ bot = commands.Bot(
     command_prefix=[".", "!", "?"],
     intents=intents,
     help_command=None,
-    case_insensitive=True,          # gõ lệnh HOA/thường đều ăn
-    allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),  # chống ping @everyone
+    case_insensitive=True,
+    allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
 )
 
 BLACK = 0x000000
-DARKER = 0x0A0A0A                   # tone đen phụ cho embed
+DARKER = 0x0A0A0A
 WARN_FILE = "warnings.json"
 MUTE_FILE = "mutes.json"
 
@@ -74,7 +74,7 @@ AUTO_REPLIES = [
     "ngu + tục = combo m đấy, chúc mừng ha",
     "xấu và dốt đi chung với nhau như m là hiếm lắm đấy",
     "dm nguy hiểm cái mồm chứ não trống rỗng, về làm lại cái đầu đi",
-    " # Mẹ m con đĩ l m tu luyện mấy chục năm cux đéo = bố m đâu nói lắm v??"
+    "con đĩ lồn m tu luyện mấy chục năm cũng đéo bằng bố m đâu, nói lắm v??",
 ]
 
 BAD_WORDS = [
@@ -87,10 +87,10 @@ ROAST_TEXT = "is stupid"
 TEMPLATE_FILE = "arrow.png"
 TEMPLATE_URL = "https://i.pinimg.com/1200x/d0/ef/e9/d0efe9560ad8d16e47643939024025c6.jpg"
 _tpl_cache = None
-_avatar_cache = {}                  # cache avatar → đỡ tải lại từng lần (bot mượt hơn)
-_last_msg = {}                      # anti-spam khối lệnh: user_id -> (nội dung, timestamp)
+_avatar_cache = {}
+_last_msg = {}
 
-# ==================== JSON (an toàn hơn: chống lỗi file hỏng) ====================
+# ==================== JSON ====================
 def load_json(path):
     try:
         if os.path.exists(path):
@@ -100,14 +100,14 @@ def load_json(path):
                     return data
     except (json.JSONDecodeError, OSError):
         pass
-    return {}   # file hỏng thì trả rỗng, k crash bot
+    return {}
 
 def save_json(path, data):
     try:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-        os.replace(tmp, path)       # ghi file nguyên tử — mất điện giữa chừng cũng k hỏng file cũ
+        os.replace(tmp, path)
     except OSError:
         pass
 
@@ -203,14 +203,12 @@ def create_roast_image(avatar_bytes):
     return buf
 
 async def get_avatar(member):
-    """Cache avatar 10 phút — đỡ phải tải lại mỗi lần (mượt hơn nhiều)"""
     key = (member.id, str(member.display_avatar))
     now = time.time()
     if key in _avatar_cache and now - _avatar_cache[key][1] < 600:
         return _avatar_cache[key][0]
     data = await member.display_avatar.replace(format="png", size=256).read()
     _avatar_cache[key] = (data, now)
-    # dọn cache khi quá 200 entry
     if len(_avatar_cache) > 200:
         oldest = min(_avatar_cache, key=lambda k: _avatar_cache[k][1])
         _avatar_cache.pop(oldest, None)
@@ -227,16 +225,15 @@ async def send_with_roast(ctx, embed, member):
         print("Lỗi tạo ảnh:", e)
         await ctx.send(embed=embed)
 
-# ==================== EMBED ĐẸP ====================
+# ==================== EMBED ====================
 def base_embed(title: str, description: str = None, member: discord.Member = None):
-    """Embed nền chung — style đen bóng, có author + footer đồng bộ"""
+    """Embed nền đen, không emoji, header tối giản kiểu hồ sơ"""
     e = discord.Embed(title=title, description=description, color=BLACK, timestamp=discord.utils.utcnow())
     if member:
         e.set_author(name=str(member), icon_url=member.display_avatar.url)
     return e
 
 def progress_bar(current: int, total: int, length: int = 10):
-    """Thanh tiến độ: ▓▓▓░░░░░░░ 3/5"""
     filled = int(length * current / total)
     return "▓" * filled + "░" * (length - filled)
 
@@ -282,7 +279,7 @@ class WarnActionView(discord.ui.View):
         self.member = member
         self.message = None
 
-    @discord.ui.button(label="Tu ngay", emoji="🔨", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Tu ngay", style=discord.ButtonStyle.danger)
     async def ban_now(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.ban_members:
             return await interaction.response.send_message("clm k có quyền Ban Members mà cũng đòi ban ngta, mơ đi m", ephemeral=True)
@@ -305,9 +302,9 @@ class WarnActionView(discord.ui.View):
             content=f"**{self.member}** chốt đơn bởi **{interaction.user}** — out khỏi server chớ ngoái đầu",
             embed=None, view=self)
 
-        embed = base_embed(" # CÚT (WARN LIMIT)", member=self.member)
+        embed = base_embed("CÚT — BAY MÀU (WARN LIMIT)", member=self.member)
         embed.color = DARKER
-        embed.add_field(name="Người bay", value=f"{self.member.mention}\n`{self.member.id}`", inline=False)
+        embed.description = f"**{self.member.mention}** vừa bị đuổi khỏi server. ID: `{self.member.id}`"
         embed.add_field(name="Người bấm", value=interaction.user.mention, inline=True)
         try:
             avatar_bytes = await get_avatar(self.member)
@@ -318,7 +315,7 @@ class WarnActionView(discord.ui.View):
         except Exception:
             await interaction.channel.send(embed=embed)
 
-    @discord.ui.button(label="Xoa all w", emoji="🧹", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Xoa all w", style=discord.ButtonStyle.secondary)
     async def clear_warns(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.manage_messages:
             return await interaction.response.send_message("cần quyền Manage Messages mới tha đc, m là ai mà đòi tha", ephemeral=True)
@@ -385,24 +382,25 @@ async def on_message(message):
                     "reason": f"mồm thối chat tại #{message.channel}"}
                 save_json(MUTE_FILE, mutes)
 
-                e = base_embed("AUTO-MUTE — MỒM THỐI BỊ BỊT RỒI", member=member)
-                e.add_field(name="Đối tượng", value=f"{member.mention}\n`{member.id}`", inline=False)
-                e.add_field(name="Bị bịt mồm", value=f"**{AUTO_MUTE_SECONDS} giây**", inline=True)
-                e.add_field(name="Lý do", value="mồm thối nói bậy, bịt lại cho đỡ thúi server", inline=True)
+                e = base_embed("AUTO-MUTE — BỊT MỒM", member=member)
+                e.description = f"{member.mention} vừa ăn timeout vì mồm thối"
+                e.add_field(name="Thời gian", value=f"**{AUTO_MUTE_SECONDS} giây**", inline=True)
+                e.add_field(name="Lý do", value="nói bậy ở kênh chat, bịt lại cho đỡ thúi server", inline=True)
+                e.add_field(name="ID", value=f"`{member.id}`", inline=True)
                 e.set_thumbnail(url=member.display_avatar.url)
                 await message.channel.send(content=f"{member.mention} {random.choice(AUTO_REPLIES)}", embed=e)
-                print(f"🤖 Auto-mute {member} ({AUTO_MUTE_SECONDS}s)")
+                print(f"Auto-mute {member} ({AUTO_MUTE_SECONDS}s)")
             except discord.Forbidden:
                 await message.channel.send("dm cho bot quyền Timeout members đi rồi bot xử nó, để bot ngắm nó à")
 
     await bot.process_commands(message)
 
-# ==================== ANTI-SPAM LỆNH (bot mượt, khỏi bị spam lệnh) ====================
+# ==================== ANTI-SPAM ====================
 async def cooldown_check(ctx):
     key = (ctx.author.id, ctx.command.qualified_name)
     now = time.time()
     last = _last_msg.get(key, 0)
-    if now - last < 3:      # 3 giây/lệnh
+    if now - last < 3:
         raise commands.CommandOnCooldown(None, 3 - (now - last))
     _last_msg[key] = now
     return True
@@ -414,24 +412,19 @@ bot.add_check(cooldown_check)
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member = None, time: str = None, *, reason=None):
     if member is None:
-        e = base_embed("SAI CÚ PHÁP", ".m @user 10m lý_do — tag thiếu thì mute cái gì con", member=ctx.author)
-        return await ctx.send(embed=e)
+        return await ctx.send(embed=base_embed("SAI CÚ PHÁP", ".m @user 10m lý_do — tag thiếu thì mute cái gì con", member=ctx.author))
     seconds = parse_duration(time) if time else None
     if time and check_time_format(time) and seconds is None:
-        e = base_embed("SAI THỜI GIAN RỒI M ƠI", "`1s`-`60s` • `1p`-`60p` • `1h`-`24h` • `1d`-`28d`", member=ctx.author)
-        return await ctx.send(embed=e)
+        return await ctx.send(embed=base_embed("SAI THỜI GIAN", "`1s`-`60s` • `1p`-`60p` • `1h`-`24h` • `1d`-`28d`", member=ctx.author))
     if time and seconds is None:
         reason = f"{time} {reason}" if reason else time
         time = None
     if member == ctx.author:
-        e = base_embed("NGU VCL", "tự mute mình luôn hả m, não đâu mà xài vậy", member=ctx.author)
-        return await ctx.send(embed=e)
+        return await ctx.send(embed=base_embed("NGU VCL", "tự mute mình luôn hả m, não đâu mà xài vậy", member=ctx.author))
     if member.bot:
-        e = base_embed("K ĐỔI RỒI", "mute bot làm gì, bot có mồm đâu mà chửi bậy như m", member=ctx.author)
-        return await ctx.send(embed=e)
+        return await ctx.send(embed=base_embed("K ĐỔI RỒI", "mute bot làm gì, bot có mồm đâu mà chửi bậy như m", member=ctx.author))
     if member.guild_permissions.moderate_members and ctx.author != ctx.guild.owner:
-        e = base_embed("MƠ ĐI", "ngta là mod mà đòi đụ ngang hàm, sì ke thật", member=ctx.author)
-        return await ctx.send(embed=e)
+        return await ctx.send(embed=base_embed("MƠ ĐI", "ngta là mod mà đòi đụ ngang hàm, sì ke thật", member=ctx.author))
 
     if seconds is None:
         seconds = 28 * 86400
@@ -440,8 +433,7 @@ async def mute(ctx, member: discord.Member = None, time: str = None, *, reason=N
     try:
         await member.timeout(until, reason=f"bởi {ctx.author} | {reason or 'k có lý do'}")
     except discord.Forbidden:
-        e = base_embed("BOT THIẾU QUYỀN", "đụ má cho bot quyền Timeout Members với role cao hơn nạn nhân rồi hẵng nói", member=ctx.author)
-        return await ctx.send(embed=e)
+        return await ctx.send(embed=base_embed("BOT THIẾU QUYỀN", "đụ má cho bot quyền Timeout Members với role cao hơn nạn nhân rồi hẵng nói", member=ctx.author))
 
     mutes = load_json(MUTE_FILE)
     mutes.setdefault(str(ctx.guild.id), {})[str(member.id)] = {
@@ -461,7 +453,10 @@ async def mute(ctx, member: discord.Member = None, time: str = None, *, reason=N
 
     e = base_embed("ĐÃ BỊT MỒM (TIMEOUT)", member=member)
     e.color = DARKER
-    e.description = f"**{member.mention}** đã bị bịt mồm — hết mute lúc **{until.strftime('%H:%M:%S %d/%m/%Y')}**"
+    e.description = (
+        f"{member.mention} mồm đã bị bịt\n"
+        f"Hết mute lúc **{until.strftime('%H:%M:%S %d/%m/%Y')}**"
+    )
     e.add_field(name="Thời lượng", value=f"**{format_duration(seconds)}**", inline=True)
     e.add_field(name="Lý do", value=reason or "k có lý do", inline=True)
     e.add_field(name="Mod", value=ctx.author.mention, inline=True)
@@ -535,7 +530,7 @@ async def ban(ctx, member: discord.Member = None, *, reason=None):
     await member.ban(reason=f"{reason} | Mod: {ctx.author}")
 
     try:
-        dm = base_embed("ĐĨ MẸ M BỊ NGU A", member=ctx.author)
+        dm = base_embed("M BỊ CHỐT ĐƠN RỒI", member=ctx.author)
         dm.add_field(name="Server", value=ctx.guild.name, inline=False)
         dm.add_field(name="Lý do", value=reason or "k có lý do — bay là bay luôn", inline=False)
         dm.add_field(name="Mod", value=str(ctx.author), inline=True)
@@ -545,7 +540,7 @@ async def ban(ctx, member: discord.Member = None, *, reason=None):
 
     e = base_embed("CHỐT ĐƠN — BAY MÀU (ĐÃ BAN)", member=member)
     e.color = DARKER
-    e.description = f"**{member.mention}** đã bị đuổi khỏi server vĩnh viễn"
+    e.description = f"{member.mention} đã bị đuổi khỏi server vĩnh viễn"
     e.add_field(name="Lý do", value=reason or "k có lý do", inline=True)
     e.add_field(name="Mod", value=ctx.author.mention, inline=True)
     e.add_field(name="ID", value=f"`{member.id}`", inline=True)
@@ -579,14 +574,14 @@ async def unban(ctx, user_id: int = None, *, reason=None):
 async def banlist(ctx):
     bans = [b async for b in ctx.guild.bans()]
     if not bans:
-        e = base_embed("DANH SÁCH BAN", "chưa đụ thằng nào cả, server yên bình vãi", member=ctx.author)
-        return await ctx.send(embed=e)
+        return await ctx.send(embed=base_embed("DANH SÁCH BAN", "chưa đụ thằng nào cả, server yên bình vãi", member=ctx.author))
 
     e = base_embed(f"DANH SÁCH BỊ CHỐT ({len(bans)} thằng)", member=ctx.author)
     for i, b in enumerate(bans[:25], 1):
         e.add_field(name=f"{i}. {b.user}", value=f"`{b.user.id}`", inline=True)
     if len(bans) > 25:
         e.set_footer(text=f"...và {len(bans) - 25} thằng nx")
+    e.set_footer(text="lấy ID bỏ vào .ub <ID> để tha chết")
     await ctx.send(embed=e)
 
 # ==================== WARN (.w) ====================
@@ -621,8 +616,8 @@ async def warn(ctx, member: discord.Member = None, *, reason=None):
     if count >= 5:
         e = base_embed("ĐỦ 5 WARN — RA NGOÀI ĐỂ Ý XE ĐẤY", member=member)
         e.description = (
-            f"{member.mention} gom đủ **{count}/5** warnings!\n"
-            f"{progress_bar(count, 5)} `{count}/5`\n\n"
+            f"{member.mention} gom đủ **{count}/5** warnings\n"
+            f"{progress_bar(count, 5)}\n\n"
             "mod quyết đi k thì nó lại ló mặt nx đó"
         )
         e.add_field(name="Warn mới nhất", value=reason or "k có lý do", inline=False)
@@ -636,7 +631,7 @@ async def warn(ctx, member: discord.Member = None, *, reason=None):
         return
 
     e = base_embed("ĐÃ WARN", member=member)
-    e.description = f"**{member.mention}** vừa ăn 1 cảnh báo"
+    e.description = f"{member.mention} vừa ăn 1 cảnh báo"
     e.add_field(name="Tiến độ", value=f"{progress_bar(count, 5)} `{count}/5`", inline=False)
     e.add_field(name="Lý do", value=reason or "k có lý do", inline=True)
     e.add_field(name="Mod", value=ctx.author.mention, inline=True)
@@ -650,12 +645,12 @@ async def warn(ctx, member: discord.Member = None, *, reason=None):
 async def warns(ctx, member: discord.Member = None):
     member = member or ctx.author
     data = load_json(WARN_FILE).get(str(ctx.guild.id), {}).get(str(member.id), [])
-    e = base_embed(f"TIỀN ÁN TIỀN SỰ", member=member)
+    e = base_embed("TIỀN ÁN TIỀN SỰ", member=member)
     e.set_thumbnail(url=member.display_avatar.url)
     if not data:
         e.description = "sạch bong, chưa bị ai đụ gì cả"
     else:
-        e.description = f"**{member.mention}** đang mang `{len(data)}/5` cảnh báo\n{progress_bar(len(data), 5)}"
+        e.description = f"{member.mention} đang mang `{len(data)}/5` cảnh báo\n{progress_bar(len(data), 5)}"
         for i, w in enumerate(data, 1):
             e.add_field(name=f"Warn #{i}", value=f"lý do: {w['reason']}\nmod: {w['mod']}", inline=False)
     e.set_footer(text=footer_cmd(ctx), icon_url=ctx.author.display_avatar.url)
@@ -703,7 +698,7 @@ async def help(ctx):
     e.set_footer(text=f"{ctx.guild.name} • prefix: . ! ?", icon_url=ctx.guild.icon.url if ctx.guild.icon else None)
     await ctx.send(embed=e)
 
-# ==================== LỖI (bắt thêm cooldown + lỗi ngầm) ====================
+# ==================== LỖI ====================
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
@@ -718,8 +713,7 @@ async def on_command_error(ctx, error):
         return
     if isinstance(error, commands.MissingRequiredArgument):
         return await ctx.send(embed=base_embed("THIẾU THÔNG TIN RỒI CON LỒN", "gõ .help coi lại cách dùng rồi làm", member=ctx.author))
-    # lỗi lạ → in console để debug, k crash
-    print(f"⚠️ Lỗi lệnh {ctx.command}: {error}")
+    print(f"Lỗi lệnh {ctx.command}: {error}")
 
 # ==================== CHẠY ====================
 open_port()
@@ -728,5 +722,5 @@ while True:
     try:
         bot.run(TOKEN)
     except Exception as e:
-        print(f"⚠️ Bot lỗi: {e} — tự khởi động lại sau 5 giây...")
+        print(f"Bot lỗi: {e} — tự khởi động lại sau 5 giây...")
         time.sleep(5)
