@@ -8,6 +8,7 @@ import math
 import random
 import threading
 import time
+import unicodedata
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta
@@ -48,7 +49,13 @@ intents.members = True
 bot = commands.Bot(command_prefix=[".", "!", "?"], intents=intents, help_command=None)
 
 BLACK = 0x000000
+WARN_FILE = "warnings.json"
 MUTE_FILE = "mutes.json"
+
+# ==================== AUTO-MOD CẤU HÌNH ====================
+AUTO_MUTE_SECONDS = 36                      # thời gian auto mute khi chat cấm
+AUTO_REPLY = "ngu ngu cc 🤡"                # câu mỉa khi bị auto mute
+BAD_WORDS = ["nhutgay", "nhutga"]           # biến thể từ cấm (không dấu, không khoảng trắng)
 
 ROAST_TEXT = "is stupid"
 TEMPLATE_FILE = "arrow.png"
@@ -66,8 +73,12 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
-def load_mutes(): return load_json(MUTE_FILE)
-def save_mutes(d): save_json(MUTE_FILE, d)
+# ==================== CHUẨN HÓA CHỮ (BẮT TRÈO) ====================
+def normalize_text(text):
+    """Bỏ dấu tiếng Việt, bỏ khoảng trắng/ký tự chèn → bắt 'Nhựt ga y', 'nhut-gay'..."""
+    text = unicodedata.normalize("NFD", text.lower())
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    return re.sub(r"[\s\._\-*/\\]+", "", text)
 
 # ==================== BANNER MŨI TÊN ====================
 def download_template():
@@ -193,6 +204,54 @@ async def on_ready():
     print(f"✅ Bot online: {bot.user}")
     await bot.change_presence(activity=discord.Game(name=".help | .m .b .w"))
 
+# ==================== AUTO-MOD: CHAT TỪ CẤM = MUTE 36s + MỈA ====================
+@bot.event
+async def on_message(message):
+    if message.author.bot or message.guild is None:
+        await bot.process_commands(message)
+        return
+
+    n = normalize_text(message.content)
+    if any(word in n for word in BAD_WORDS):
+        member = message.author
+
+        # Mod/admin khỏi bị auto mute
+        if member.guild_permissions.moderate_members or member.guild_permissions.administrator:
+            await bot.process_commands(message)
+            return
+
+        already_muted = member.timed_out_until and member.timed_out_until > discord.utils.utcnow()
+
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.NotFound):
+            pass
+
+        if not already_muted:
+            until = discord.utils.utcnow() + timedelta(seconds=AUTO_MUTE_SECONDS)
+            try:
+                await member.timeout(until, reason=f"Auto-mod: chat từ cấm tại #{message.channel}")
+
+                mutes = load_json(MUTE_FILE)
+                mutes.setdefault(str(message.guild.id), {})[f"automod_{member.id}"] = {
+                    "until": until.isoformat(),
+                    "mod": "AUTO-MOD",
+                    "reason": f"Chat từ cấm tại #{message.channel}"}
+                save_json(MUTE_FILE, mutes)
+
+                embed = discord.Embed(title="🤖 AUTO-MUTE", color=BLACK,
+                                      timestamp=discord.utils.utcnow())
+                embed.add_field(name="👤 Người dùng", value=f"{member.mention} ({member})", inline=False)
+                embed.add_field(name="⏱️ Thời lượng", value=f"**{AUTO_MUTE_SECONDS} giây**", inline=True)
+                embed.add_field(name="📄 Lý do", value="Chat từ cấm 🤡", inline=True)
+                embed.set_thumbnail(url=member.display_avatar.url)
+                await message.channel.send(content=f"{member.mention} **{AUTO_REPLY}**", embed=embed)
+                print(f"🤖 Auto-mute {member} trong {AUTO_MUTE_SECONDS}s")
+            except discord.Forbidden:
+                await message.channel.send("⚠️ Bot thiếu quyền **Timeout members** để auto-mute!")
+
+    await bot.process_commands(message)   # QUAN TRỌNG: giữ lệnh chạy bình thường
+
 # ==================== MUTE (.m) — TIMEOUT GỐC DISCORD ====================
 @bot.command(aliases=["m"])
 @commands.has_permissions(moderate_members=True)
@@ -213,24 +272,33 @@ async def mute(ctx, member: discord.Member = None, time: str = None, *, reason=N
     if member.guild_permissions.moderate_members and ctx.author != ctx.guild.owner:
         return await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Người này có quyền moderation, không mute được!", color=BLACK))
 
-    # Mặc định không nhập thời gian → 28 ngày (tối đa Discord cho)
     if seconds is None:
-        seconds = 28 * 86400
+        seconds = 28 * 86400   # không nhập thời gian = 28 ngày
 
     until = discord.utils.utcnow() + timedelta(seconds=seconds)
     try:
         await member.timeout(until, reason=f"Bởi {ctx.author} | {reason or 'Không lý do'}")
     except discord.Forbidden:
         return await ctx.send(embed=discord.Embed(title="🚫 BOT THIẾU QUYỀN",
-            description="Bot cần quyền **Timeout members** (cao hơn role nạn nhân)!", color=BLACK))
+            description="Bot cần quyền **Timeout members** (và role cao hơn nạn nhân)!", color=BLACK))
 
-    # Lưu lại để .muteinfo xem
-    mutes = load_mutes()
+    mutes = load_json(MUTE_FILE)
     mutes.setdefault(str(ctx.guild.id), {})[str(member.id)] = {
         "until": until.isoformat(),
         "mod": str(ctx.author),
         "reason": reason or "Không lý do"}
-    save_mutes(mutes)
+    save_json(MUTE_FILE, mutes)
+
+    # DM riêng cho nạn nhân
+    try:
+        dm = discord.Embed(title="🔇 BẠN BỊ MUTE", color=BLACK, timestamp=discord.utils.utcnow())
+        dm.add_field(name="🏠 Server", value=ctx.guild.name, inline=False)
+        dm.add_field(name="⏱️ Thời lượng", value=format_duration(seconds), inline=True)
+        dm.add_field(name="📄 Lý do", value=reason or "Không có lý do", inline=True)
+        dm.add_field(name="🛡️ Mod", value=str(ctx.author), inline=True)
+        await member.send(embed=dm)
+    except discord.Forbidden:
+        pass
 
     embed = discord.Embed(title="🔇 ĐÃ TIMEOUT (MUTE GỐC DISCORD)", color=BLACK, timestamp=discord.utils.utcnow())
     embed.add_field(name="👤 Người dùng", value=f"{member.mention} ({member})", inline=False)
@@ -255,11 +323,11 @@ async def unmute(ctx, member: discord.Member = None):
     except discord.Forbidden:
         return await ctx.send(embed=discord.Embed(title="🚫 BOT THIẾU QUYỀN", color=BLACK))
 
-    mutes = load_mutes()
+    mutes = load_json(MUTE_FILE)
     gid, uid = str(ctx.guild.id), str(member.id)
     if gid in mutes and uid in mutes[gid]:
         del mutes[gid][uid]
-        save_mutes(mutes)
+        save_json(MUTE_FILE, mutes)
 
     embed = discord.Embed(title="🔊 ĐÃ UNMUTE", color=BLACK)
     embed.add_field(name="👤", value=member.mention, inline=True)
@@ -271,9 +339,8 @@ async def unmute(ctx, member: discord.Member = None):
 @bot.command(aliases=["mi"])
 async def muteinfo(ctx, member: discord.Member = None):
     member = member or ctx.author
-    info = load_mutes().get(str(ctx.guild.id), {}).get(str(member.id))
+    info = load_json(MUTE_FILE).get(str(ctx.guild.id), {}).get(str(member.id))
 
-    # Ưu tiên dữ liệu thật từ Discord
     if member.timed_out_until:
         until = member.timed_out_until
         total_sec = int((until - discord.utils.utcnow()).total_seconds())
@@ -313,6 +380,17 @@ async def ban(ctx, member: discord.Member = None, *, reason=None):
     if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
         return await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Không ban được người cấp cao hơn bạn!", color=BLACK))
     await member.ban(reason=f"{reason} | Mod: {ctx.author}")
+
+    # DM riêng trước khi mất kết nối
+    try:
+        dm = discord.Embed(title="🔨 BẠN BỊ BAN", color=BLACK)
+        dm.add_field(name="🏠 Server", value=ctx.guild.name, inline=False)
+        dm.add_field(name="📄 Lý do", value=reason or "Không có lý do", inline=False)
+        dm.add_field(name="🛡️ Mod", value=str(ctx.author), inline=True)
+        await member.send(embed=dm)
+    except discord.Forbidden:
+        pass
+
     embed = discord.Embed(title="🔨 ĐÃ BAN", color=BLACK, timestamp=discord.utils.utcnow())
     embed.add_field(name="👤", value=f"{member} ({member.id})", inline=False)
     embed.add_field(name="📄 Lý do", value=reason or "Không có lý do", inline=True)
@@ -333,7 +411,7 @@ async def unban(ctx, user_id: int = None):
     except discord.NotFound:
         await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Người này không bị ban!", color=BLACK))
 
-# ==================== WARN (.w) ====================
+# ==================== WARN (.w) — CÓ DM RIÊNG ====================
 @bot.command(aliases=["w"])
 @commands.has_permissions(manage_messages=True)
 async def warn(ctx, member: discord.Member = None, *, reason=None):
@@ -341,21 +419,39 @@ async def warn(ctx, member: discord.Member = None, *, reason=None):
         return await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Tag người cần warn!", color=BLACK))
     if member.bot:
         return await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Không thể warn bot!", color=BLACK))
-    warnings = load_json("warnings.json")
+
+    warnings = load_json(WARN_FILE)
     gid, uid = str(ctx.guild.id), str(member.id)
     warnings.setdefault(gid, {}).setdefault(uid, [])
     warnings[gid][uid].append({"reason": reason or "Không lý do", "mod": str(ctx.author)})
-    save_json("warnings.json", warnings)
+    save_json(WARN_FILE, warnings)
     count = len(warnings[gid][uid])
+
     if count >= 5:
         await member.ban(reason=f"Đạt {count} warnings")
         return await ctx.send(embed=discord.Embed(title="🔨 AUTO BAN",
             description=f"{member.mention} đạt **{count} warnings**!", color=BLACK))
+
+    # ===== DM RIÊNG KÈM LÝ DO =====
+    try:
+        dm = discord.Embed(title="⚠️ BẠN BỊ CẢNH BÁO", color=BLACK, timestamp=discord.utils.utcnow())
+        dm.add_field(name="🏠 Server", value=ctx.guild.name, inline=False)
+        dm.add_field(name="📄 Lý do", value=reason or "Không có lý do", inline=False)
+        dm.add_field(name="🔢 Lần cảnh báo", value=f"**{count}/5** — đủ 5 lần = BAN", inline=True)
+        dm.add_field(name="🛡️ Mod", value=str(ctx.author), inline=True)
+        if ctx.guild.icon:
+            dm.set_thumbnail(url=ctx.guild.icon.url)
+        await member.send(embed=dm)
+        dm_status = "✅ Đã DM riêng"
+    except discord.Forbidden:
+        dm_status = "❌ Không DM được (user đóng DM)"
+
     embed = discord.Embed(title="⚠️ ĐÃ WARN", color=BLACK, timestamp=discord.utils.utcnow())
     embed.add_field(name="👤", value=f"{member.mention} ({member})", inline=False)
     embed.add_field(name="📄 Lý do", value=reason or "Không có lý do", inline=True)
     embed.add_field(name="🔢 Lần", value=f"**{count}/5**", inline=True)
     embed.add_field(name="🛡️ Mod", value=ctx.author.mention, inline=True)
+    embed.add_field(name="📩 DM", value=dm_status, inline=True)
     embed.set_thumbnail(url=member.display_avatar.url)
     await send_with_roast(ctx, embed, member)
 
@@ -363,8 +459,9 @@ async def warn(ctx, member: discord.Member = None, *, reason=None):
 @bot.command(aliases=["ws", "warnings"])
 async def warns(ctx, member: discord.Member = None):
     member = member or ctx.author
-    data = load_json("warnings.json").get(str(ctx.guild.id), {}).get(str(member.id), [])
+    data = load_json(WARN_FILE).get(str(ctx.guild.id), {}).get(str(member.id), [])
     embed = discord.Embed(title=f"⚠️ WARN — {member.name}", color=BLACK)
+    embed.set_thumbnail(url=member.display_avatar.url)
     if not data:
         embed.description = "✅ Không có cảnh báo nào!"
     else:
@@ -378,11 +475,11 @@ async def warns(ctx, member: discord.Member = None):
 async def clearwarn(ctx, member: discord.Member = None):
     if member is None:
         return await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Tag người cần xóa warn!", color=BLACK))
-    warnings = load_json("warnings.json")
+    warnings = load_json(WARN_FILE)
     gid, uid = str(ctx.guild.id), str(member.id)
     if gid in warnings and uid in warnings[gid]:
         del warnings[gid][uid]
-        save_json("warnings.json", warnings)
+        save_json(WARN_FILE, warnings)
         await ctx.send(embed=discord.Embed(title="🧹 ĐÃ XÓA WARN", description=member.mention, color=BLACK))
     else:
         await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Không có warn nào!", color=BLACK))
@@ -391,15 +488,16 @@ async def clearwarn(ctx, member: discord.Member = None):
 @bot.command()
 async def help(ctx):
     embed = discord.Embed(title="📖 LỆNH BOT", color=BLACK)
-    embed.add_field(name="🔇 .m @user <30s|10p|2h|1d> [lý do]", value="Timeout gốc Discord (không nhập thời gian = 28 ngày)", inline=False)
+    embed.add_field(name="🔇 .m @user <30s|10p|2h|1d> [lý do]", value="Timeout gốc Discord — không nhập thời gian = 28 ngày, kèm DM", inline=False)
     embed.add_field(name="🔊 .um @user", value="Gỡ timeout", inline=False)
     embed.add_field(name="⏳ .mi @user", value="Xem còn bao lâu hết mute", inline=False)
-    embed.add_field(name="🔨 .b @user [lý do]", value="Ban", inline=False)
+    embed.add_field(name="🔨 .b @user [lý do]", value="Ban — kèm DM riêng", inline=False)
     embed.add_field(name="✅ .ub <ID>", value="Unban", inline=False)
-    embed.add_field(name="⚠️ .w @user [lý do]", value="Warn (5 lần = ban)", inline=False)
+    embed.add_field(name="⚠️ .w @user [lý do]", value="Warn (5 lần = ban) — DM riêng kèm lý do", inline=False)
     embed.add_field(name="📋 .ws [@user]", value="Xem warn", inline=False)
     embed.add_field(name="🧹 .cw @user", value="Xóa warn", inline=False)
-    embed.add_field(name="⏱️ Thời gian", value="`s` 1-60 • `p`/`m` 1-60 • `h` 1-24 • `d` 1-28 (giới hạn Discord)", inline=False)
+    embed.add_field(name="⏱️ Thời gian", value="`s` 1-60 • `p`/`m` 1-60 • `h` 1-24 • `d` 1-28", inline=False)
+    embed.add_field(name="🤖 Auto-mod", value=f"Chat từ cấm → tự xóa tin + mute {AUTO_MUTE_SECONDS}s + mỉa 😜", inline=False)
     embed.set_footer(text="Prefix: . ! ?")
     await ctx.send(embed=embed)
 
@@ -421,7 +519,7 @@ async def on_command_error(ctx, error):
 # ==================== CHẠY ====================
 open_port()
 
-while True:                     # chết thì tự dậy
+while True:
     try:
         bot.run(TOKEN)
     except Exception as e:
