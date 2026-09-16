@@ -64,7 +64,7 @@ AUTO_MUTE_SECONDS = 36
 AUTO_REPLIES = [
     "dm mồm như bãi phốt v mà cũng dám mở ra nói, ra đường cẩn thận đấy",
     "ngu như con bò mà mồm thì tục như con đĩ, im mồm lại cho cha nhờ",
-    "clm đẻ ra mà k ai dạy nói chuyện hả con, mồm lồn vcl",
+    "clm đẻ ra mà k ai dạy nói chuyện hả con, mồm dơ vcl ra",
     "óc chó vừa thôi, mặt phò mà mồm còn thối hơn bãi rác",
     "nói câu nào tục câu đấy, cút ra chỗ khác chat cho cha nhờ",
     "thế hệ sau mà ngu thế này thì cộng đồng tiêu thật rồi",
@@ -74,6 +74,7 @@ AUTO_REPLIES = [
     "ngu + tục = combo m đấy, chúc mừng ha",
     "xấu và dốt đi chung với nhau như m là hiếm lắm đấy",
     "dm nguy hiểm cái mồm chứ não trống rỗng, về làm lại cái đầu đi",
+    " # Mẹ m con đĩ l m tu luyện mấy chục năm cux đéo = bố m đâu nói lắm v??"
 ]
 
 BAD_WORDS = [
@@ -304,7 +305,7 @@ class WarnActionView(discord.ui.View):
             content=f"**{self.member}** chốt đơn bởi **{interaction.user}** — out khỏi server chớ ngoái đầu",
             embed=None, view=self)
 
-        embed = base_embed("CHỐT ĐƠN — BAY MÀU RA KHỎI SERVER (WARN LIMIT)", member=self.member)
+        embed = base_embed(" # CÚT (WARN LIMIT)", member=self.member)
         embed.color = DARKER
         embed.add_field(name="Người bay", value=f"{self.member.mention}\n`{self.member.id}`", inline=False)
         embed.add_field(name="Người bấm", value=interaction.user.mention, inline=True)
@@ -534,7 +535,7 @@ async def ban(ctx, member: discord.Member = None, *, reason=None):
     await member.ban(reason=f"{reason} | Mod: {ctx.author}")
 
     try:
-        dm = base_embed("ĐĨ MẸ M BỊ CHỐT ĐƠN RỒI", member=ctx.author)
+        dm = base_embed("ĐĨ MẸ M BỊ NGU A", member=ctx.author)
         dm.add_field(name="Server", value=ctx.guild.name, inline=False)
         dm.add_field(name="Lý do", value=reason or "k có lý do — bay là bay luôn", inline=False)
         dm.add_field(name="Mod", value=str(ctx.author), inline=True)
