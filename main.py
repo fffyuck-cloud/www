@@ -330,7 +330,7 @@ class WarnActionView(discord.ui.View):
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(
-            content=f"**{interaction.user}** tha chết cho **{self.member}** — tái phạm nx là chốt đơn luôn",
+            content=f"**{interaction.user}** tha chết cho **{self.member}** — tái phạm nx là cút đéo nói nhiều",
             embed=None, view=self)
 
     async def on_timeout(self):
